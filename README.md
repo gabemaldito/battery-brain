@@ -6,6 +6,10 @@ The API collects real-time solar radiation forecasts, crosses that data with cur
 
 ---
 
+## 🌐 Live Demo
+
+[https://battery-brain-production.up.railway.app/docs](https://battery-brain-production.up.railway.app/docs)
+
 ## How It Works
 
 ```

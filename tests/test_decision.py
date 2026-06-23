@@ -1,10 +1,10 @@
 """
-Testes de integração do endpoint público GET /api/v1/decision.
+Integration tests for the public GET /api/v1/decision endpoint.
 
-Valida que:
+Validate that:
   - weather.get_forecast + price.get_current_price + battery.decide_action
-    estão corretamente encadeados
-  - Falha em qualquer serviço upstream resulta em HTTP 502 (sem preço-fantasma)
+    are correctly chained
+  - Failure in any upstream service results in HTTP 502 (no phantom price)
 """
 
 import pytest
@@ -16,18 +16,18 @@ from app.routers import decision as decision_router
 
 
 def _fake_clima_payload():
-    """Mock realista de get_forecast()."""
+    """Realistic mock of get_forecast()."""
     return {
         "location": "Groningen",
         "latitude": 53.2194,
         "longitude": 6.5665,
         "forecast": [],
-        "average_radiation": 405.0,  # > 400 para viabilizar CHARGE
+        "average_radiation": 405.0,  # > 400 to enable CHARGE
     }
 
 
 def _fake_preco_payload(price_eur_mwh: float = 30.0):
-    """Mock realista de get_current_price()."""
+    """Realistic mock of get_current_price()."""
     return {
         "current_price_eur_mwh": price_eur_mwh,
         "hourly_forecast": [
@@ -39,17 +39,17 @@ def _fake_preco_payload(price_eur_mwh: float = 30.0):
 
 @pytest.fixture
 def client():
-    """TestClient do FastAPI para o app principal."""
+    """FastAPI TestClient for the main app."""
     return TestClient(app)
 
 
 @pytest.fixture
 def patch_decision_dependencies(monkeypatch):
     """
-    Yield helper que patcha as REFERÊNCIAS em app.routers.decision (o consumidor).
+    Yields a helper that patches the REFERENCES inside app.routers.decision (the consumer).
 
-    Importante: `from x import y` cria uma referência no módulo importador. Patchar
-    no módulo fonte NÃO atualiza essa referência — por isso patchamos no destino.
+    Important: `from x import y` creates a reference in the importing module.
+    Patching the SOURCE module does NOT update that reference — hence we patch the target.
     """
     def _patch(forecast=None, current_price=None):
         if forecast is not None:
@@ -59,9 +59,9 @@ def patch_decision_dependencies(monkeypatch):
     return _patch
 
 
-# ---------- 1. Sucesso: encadeamento feliz ----------
+# ---------- 1. Success: happy path ----------
 def test_decision_success_returns_action_and_extras(client, patch_decision_dependencies):
-    """Mock perfeito → /decision retorna action + average_radiation + current_price + hourly_forecast_price."""
+    """Perfect mock -> /decision returns action + average_radiation + current_price + hourly_forecast_price."""
 
     async def fake_forecast():
         return _fake_clima_payload()
@@ -75,7 +75,7 @@ def test_decision_success_returns_action_and_extras(client, patch_decision_depen
 
     assert response.status_code == 200
     body = response.json()
-    # 30 < 50 AND 405 > 400 → CHARGE
+    # 30 < 50 AND 405 > 400 -> CHARGE
     assert body["action"] == "CHARGE"
     assert body["average_radiation"] == 405.0
     assert body["current_price"] == pytest.approx(30.0)
@@ -84,7 +84,7 @@ def test_decision_success_returns_action_and_extras(client, patch_decision_depen
 
 
 def test_decision_success_discharge(client, patch_decision_dependencies):
-    """Preço alto → DISCHARGE."""
+    """High price -> DISCHARGE."""
 
     async def fake_forecast():
         return {**_fake_clima_payload(), "average_radiation": 100.0}
@@ -101,7 +101,7 @@ def test_decision_success_discharge(client, patch_decision_dependencies):
 
 
 def test_decision_success_hold(client, patch_decision_dependencies):
-    """Preço e radiação neutros → HOLD."""
+    """Neutral price and radiation -> HOLD."""
 
     async def fake_forecast():
         return {**_fake_clima_payload(), "average_radiation": 200.0}
@@ -117,31 +117,31 @@ def test_decision_success_hold(client, patch_decision_dependencies):
     assert response.json()["action"] == "HOLD"
 
 
-# ---------- 2. Falha em price → 502 (sem preço-fantasma) ----------
+# ---------- 2. Price failure -> 502 (no phantom price) ----------
 def test_decision_propagates_502_when_price_service_fails(client, patch_decision_dependencies):
-    """Falha da EnergyZero → 502 transparente, NUNCA preço inventado."""
+    """EnergyZero failure -> transparent 502, NEVER an invented price."""
 
     async def fake_forecast():
         return _fake_clima_payload()
 
     async def fake_price_failure():
-        raise HTTPException(status_code=502, detail="EnergyZero caiu")
+        raise HTTPException(status_code=502, detail="EnergyZero crashed")
 
     patch_decision_dependencies(forecast=fake_forecast, current_price=fake_price_failure)
 
     response = client.get("/api/v1/decision")
 
     assert response.status_code == 502
-    # Garante que a resposta NÃO tem campos fabricador (preço/ação falsos)
-    assert response.json() == {"detail": "EnergyZero caiu"}
+    # Ensures the response has NO fabricated fields (no fake price/action)
+    assert response.json() == {"detail": "EnergyZero crashed"}
 
 
-# ---------- 3. Falha em weather → 502 ----------
+# ---------- 3. Weather failure -> 502 ----------
 def test_decision_propagates_502_when_weather_service_fails(client, patch_decision_dependencies):
-    """Falha da Open-Meteo → 502 transparente."""
+    """Open-Meteo failure -> transparent 502."""
 
     async def fake_forecast_failure():
-        raise HTTPException(status_code=502, detail="Open-Meteo caiu")
+        raise HTTPException(status_code=502, detail="Open-Meteo crashed")
 
     async def fake_price():
         return _fake_preco_payload()
@@ -153,9 +153,9 @@ def test_decision_propagates_502_when_weather_service_fails(client, patch_decisi
     assert response.status_code == 502
 
 
-# ---------- 4. Endpoint sem body (não aceita POST) ----------
+# ---------- 4. No body endpoint (does not accept POST) ----------
 def test_decision_does_not_accept_post_body(client):
-    """Confirma que /decision é GET-only — sem input manual possível via POST."""
+    """Confirms /decision is GET-only — no manual input possible via POST."""
     response = client.post("/api/v1/decision", json={"energy_price": 200.0})
-    # FastAPI retorna 405 Method Not Allowed quando rota é só GET
+    # FastAPI returns 405 Method Not Allowed when route is GET-only
     assert response.status_code == 405

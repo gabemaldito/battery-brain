@@ -10,7 +10,7 @@ from app.services.weather import _API_URL, _fetch_open_meteo, clear_cache, get_f
 
 
 def _fake_raw_payload():
-    """Resposta simulada da Open-Meteo com horários próximos a 'agora'."""
+    """Simulated Open-Meteo response with timestamps near 'now'."""
     now = datetime.now().replace(minute=0, second=0, microsecond=0)
     return {
         "hourly": {
@@ -24,13 +24,13 @@ def _fake_raw_payload():
 
 
 def _make_response(status_code: int, text: str = "") -> httpx.Response:
-    """Constrói Response compatível com httpx >= 0.27 (request explícito)."""
+    """Builds a Response compatible with httpx >= 0.27 (explicit request)."""
     request = httpx.Request("GET", _API_URL)
     return httpx.Response(status_code, text=text, request=request)
 
 
 def _async_return(value):
-    """Helper: cria uma coroutine que retorna `value`."""
+    """Helper: creates a coroutine that returns `value`."""
 
     async def _coro():
         return value
@@ -40,7 +40,7 @@ def _async_return(value):
 
 @pytest.fixture(autouse=True)
 def _clear_cache_between_tests():
-    """Garante isolamento de cache entre todos os testes deste módulo."""
+    """Ensures cache isolation across all tests in this module."""
     clear_cache()
     yield
     clear_cache()
@@ -48,7 +48,7 @@ def _clear_cache_between_tests():
 
 @pytest.mark.asyncio
 async def test_get_forecast_returns_serializable_json(monkeypatch):
-    """pd.Timestamp DEVE ser convertido para string ISO (bug crítico de produção)."""
+    """pd.Timestamp MUST be converted to ISO string (critical production bug)."""
     monkeypatch.setattr(weather, "_fetch_open_meteo", _async_return(_fake_raw_payload()))
 
     result = await get_forecast()
@@ -59,14 +59,14 @@ async def test_get_forecast_returns_serializable_json(monkeypatch):
 
     for entry in result["forecast"]:
         assert isinstance(entry["time"], str), (
-            f"Esperava str ISO, recebi {type(entry['time'])}"
+            f"Expected ISO str, got {type(entry['time'])}"
         )
         assert isinstance(entry["shortwave_radiation"], (int, float))
 
 
 @pytest.mark.asyncio
 async def test_get_forecast_caches_response(monkeypatch):
-    """Segunda chamada dentro do TTL NÃO deve refazer HTTP."""
+    """Second call within TTL MUST NOT re-run HTTP."""
     counter = {"calls": 0}
 
     async def fake_fetch():
@@ -84,7 +84,7 @@ async def test_get_forecast_caches_response(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_cache_expires_after_ttl(monkeypatch):
-    """Após TTL expirar, uma nova chamada DEVE re-buscar."""
+    """After TTL expires, a new call MUST re-fetch."""
     counter = {"calls": 0}
 
     async def fake_fetch():
@@ -102,17 +102,17 @@ async def test_cache_expires_after_ttl(monkeypatch):
 
     await asyncio.sleep(0.1)
     await get_forecast()
-    assert counter["calls"] == 2  # cache expirou
+    assert counter["calls"] == 2  # cache expired
 
 
 @pytest.mark.asyncio
 async def test_concurrent_requests_fetch_only_once(monkeypatch):
-    """Race condition: 5 requests simultâneos devem causar APENAS 1 fetch (gracas ao lock)."""
+    """Race condition: 5 concurrent requests should cause ONLY 1 fetch (thanks to lock)."""
     counter = {"calls": 0}
 
     async def slow_fetch():
         counter["calls"] += 1
-        await asyncio.sleep(0.05)  # simula latência de rede
+        await asyncio.sleep(0.05)  # simulate network latency
         return _fake_raw_payload()
 
     monkeypatch.setattr(weather, "_fetch_open_meteo", slow_fetch)
@@ -120,14 +120,14 @@ async def test_concurrent_requests_fetch_only_once(monkeypatch):
     results = await asyncio.gather(*[get_forecast() for _ in range(5)])
 
     assert counter["calls"] == 1, (
-        f"Esperava 1 fetch para 5 requests concorrentes, obtive {counter['calls']}"
+        f"Expected 1 fetch for 5 concurrent requests, got {counter['calls']}"
     )
     assert all(r["location"] == "Groningen" for r in results)
 
 
 @pytest.mark.asyncio
 async def test_empty_window_returns_zero_average(monkeypatch):
-    """Se a janela de 6h não tem dados, average_radiation deve ser 0.0 (não NaN)."""
+    """If the 6h window has no data, average_radiation must be 0.0 (not NaN)."""
     old_payload = {
         "hourly": {
             "time": ["2000-01-01T10:00", "2000-01-01T11:00"],
@@ -144,7 +144,7 @@ async def test_empty_window_returns_zero_average(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_network_error_raises_502(monkeypatch):
-    """httpx.RequestError deve ser convertido em HTTPException 502."""
+    """httpx.RequestError must be converted to HTTPException 502."""
 
     class FakeClient:
         def __init__(self, *args, **kwargs):
@@ -164,12 +164,12 @@ async def test_network_error_raises_502(monkeypatch):
     with pytest.raises(HTTPException) as exc_info:
         await _fetch_open_meteo()
     assert exc_info.value.status_code == 502
-    assert "Falha de rede" in exc_info.value.detail
+    assert "Network failure" in exc_info.value.detail
 
 
 @pytest.mark.asyncio
 async def test_non_2xx_response_raises_502(monkeypatch):
-    """Status não-2xx da Open-Meteo deve ser convertido em HTTPException 502."""
+    """Non-2xx status from Open-Meteo must be converted to HTTPException 502."""
 
     class FakeClient:
         def __init__(self, *args, **kwargs):
@@ -193,8 +193,8 @@ async def test_non_2xx_response_raises_502(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_unexpected_payload_raises_502(monkeypatch):
-    """Resposta JSON válida mas com estrutura inesperada → 502."""
-    bad_payload = {"unexpected_key": []}  # sem "hourly"
+    """Valid JSON but unexpected structure -> 502."""
+    bad_payload = {"unexpected_key": []}  # missing "hourly"
     monkeypatch.setattr(weather, "_fetch_open_meteo", _async_return(bad_payload))
 
     with pytest.raises(HTTPException) as exc_info:

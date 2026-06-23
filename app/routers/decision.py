@@ -12,27 +12,27 @@ router = APIRouter()
 @router.get("/decision")
 async def decision():
     """
-    Retorna a decisão da bateria cruzando:
-      - radiação solar atual + próximas 6h (Open-Meteo, via weather.get_forecast)
-      - preço atual de eletricidade + próximas 7h (EnergyZero, via price.get_current_price)
+    Returns the battery decision by combining:
+      - current solar radiation + next 6h (Open-Meteo, via weather.get_forecast)
+      - current electricity price + next 7h (EnergyZero, via price.get_current_price)
 
-    Sem input manual — ambos os dados vêm de APIs externas.
-    Em caso de falha da API, retorna HTTPException 502 transparentemente.
-    As duas chamadas HTTP são independentes e paralelizadas via asyncio.gather.
+    No manual input — both data points come from external APIs.
+    On API failure, returns HTTPException 502 transparently.
+    The two HTTP calls are independent and parallelized via asyncio.gather.
     """
-    dados_clima, dados_preco = await asyncio.gather(
+    weather_data, price_data = await asyncio.gather(
         get_forecast(),
         get_current_price(),
     )
 
-    radiacao_media = dados_clima["average_radiation"]
-    preco_atual = dados_preco["current_price_eur_mwh"]
+    average_radiation = weather_data["average_radiation"]
+    current_price = price_data["current_price_eur_mwh"]
 
-    acao_final = decide_action(preco_atual, radiacao_media)
+    final_action = decide_action(current_price, average_radiation)
 
     return {
-        "action": acao_final,
-        "average_radiation": radiacao_media,
-        "current_price": preco_atual,
-        "hourly_forecast_price": dados_preco["hourly_forecast"],
+        "action": final_action,
+        "average_radiation": average_radiation,
+        "current_price": current_price,
+        "hourly_forecast_price": price_data["hourly_forecast"],
     }

@@ -40,7 +40,7 @@ Both inputs are fetched automatically. The dashboard never sees a "typed" or sta
 Health check.
 
 ```json
-{ "status": "Servidor ativo" }
+{ "status": "Server running" }
 ```
 
 ### `GET /api/v1/forecast`

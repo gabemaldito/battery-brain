@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from app.routers.forecast import router as forecast_router
 from app.routers.decision import router as decision_router
 
-# Configuração básica de logging — visível em produção (Railway) e local
+# Basic logging configuration — visible in production (Railway) and locally
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -26,6 +26,5 @@ app.include_router(decision_router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
-    logger.debug("Health check acessado")
-    return {"status": "Servidor ativo"}
-
+    logger.debug("Health check accessed")
+    return {"status": "Server running"}

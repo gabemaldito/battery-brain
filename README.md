@@ -68,13 +68,75 @@ Fetches solar radiation forecast for the next 6 hours in Groningen from the Open
   "average_radiation": 49.67,
   "current_price": 187.42,
   "hourly_forecast_price": [
-    { "date": "2026-06-23T14:00:00+0200", "price": 0.18742, "priceInVat": 0.20318, "priceExVat": 0.18742 },
-    { "date": "2026-06-23T15:00:00+0200", "price": 0.19000, "priceInVat": 0.20590, "priceExVat": 0.19000 }
+    { "readingDate": "2026-06-23T14:00:00+0200", "price": 0.18742 },
+    { "readingDate": "2026-06-23T15:00:00+0200", "price": 0.19000 }
   ]
 }
 ```
 
+> **Note:** Prices in `hourly_forecast_price` are VAT-inclusive (`inclBtw=true`). To convert to € / MWh, multiply `price` by 1000. The legacy `priceExVat` / `priceInVat` fields were removed when tracking the EnergyZero v1 API migration.
+```
+
 If the EnergyZero price API **or** the Open-Meteo solar API is unreachable, the endpoint returns **HTTP 502** — never a fabricated or cached-stale price.
+
+---
+
+## 🎨 Frontend Integration
+
+This API is ready to be consumed from **any browser, mobile, or CLI client**.
+
+### Base URLs
+
+| Env | URL |
+|---|---|
+| Production | `https://battery-brain-production.up.railway.app` |
+| Local dev  | `http://127.0.0.1:8000` |
+
+### CORS
+
+`CORSMiddleware` is enabled globally. Default allowed origins cover popular frontend dev servers out of the box:
+
+- `http://localhost:3000` (Next.js / Create React App)
+- `http://localhost:5173` (Vite)
+- `http://localhost:8080` (Vue CLI)
+- `http://localhost:4200` (Angular)
+- `http://127.0.0.1:{3000,5173,8080,4200}`
+
+For production, override using the `CORS_ALLOWED_ORIGINS` environment variable (comma-separated):
+
+```bash
+CORS_ALLOWED_ORIGINS="https://my-dashboard.example.com,https://www.example.com"
+```
+
+### Quick cURL
+
+```bash
+curl https://battery-brain-production.up.railway.app/api/v1/decision
+```
+
+### Generate a typed client
+
+The full OpenAPI spec is at **`/openapi.json`**. You can generate strongly-typed clients in your preferred language:
+
+```bash
+# TypeScript (types only)
+npx openapi-typescript https://battery-brain-production.up.railway.app/openapi.json \
+  -o battery-brain-types.ts
+
+# TypeScript (full axios-based client)
+npx openapi-typescript-codegen \
+  --input https://battery-brain-production.up.railway.app/openapi.json \
+  --output ./src/api
+```
+
+Interactive docs:
+
+- **Swagger UI** → `/docs`
+- **ReDoc**      → `/redoc`
+
+### Authentication
+
+The current deployment is **public / unauthenticated** for demo purposes. For a production frontend, add a Bearer-token or API-key middleware to `app/main.py` before exposing publicly.
 
 ---
 

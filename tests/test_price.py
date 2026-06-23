@@ -1,6 +1,4 @@
 import asyncio
-from datetime import datetime, timedelta
-from typing import Optional
 
 import httpx
 import pandas as pd
@@ -12,33 +10,28 @@ from app.services import price
 from app.services.price import _fetch_energyzero, _pick_price_per_kwh, clear_cache, get_current_price
 
 _AMSTERDAM = zoneinfo.ZoneInfo("Europe/Amsterdam")
-_PRICE_EX_VAT_EUR_KWH = 0.07500  # 0.075 €/kWh * 1000 = 75 €/MWh
+_PRICE_EUR_KWH = 0.07500  # 0.075 €/kWh * 1000 = 75 €/MWh
 
 
 def _fake_energyzero_payload(
     *,
-    missing_price_ex_vat: bool = False,
     hours_ahead: int = 8,
     base: str = "now",
 ) -> dict:
-    """Simulated EnergyZero response with timestamps near 'now' in Europe/Amsterdam."""
+    """Simulated EnergyZero v1 response with timestamps near 'now' in Europe/Amsterdam."""
     if base == "now":
         start = pd.Timestamp.now(tz=_AMSTERDAM).floor("h")
     elif base == "past":
         start = pd.Timestamp.now(tz=_AMSTERDAM).floor("h") - pd.Timedelta(days=2)
     else:
         raise ValueError(base)
-    prices = []
-    for i in range(hours_ahead):
-        ts = start + pd.Timedelta(hours=i)
-        entry = {
-            "date": ts.isoformat(),
-            "price": 0.08234,
-            "priceInVat": 0.08234,
+    prices = [
+        {
+            "readingDate": (start + pd.Timedelta(hours=i)).isoformat(),
+            "price": _PRICE_EUR_KWH,
         }
-        if not missing_price_ex_vat:
-            entry["priceExVat"] = _PRICE_EX_VAT_EUR_KWH
-        prices.append(entry)
+        for i in range(hours_ahead)
+    ]
     return {"Prices": prices}
 
 
@@ -73,17 +66,17 @@ async def test_get_current_price_returns_serializable_json(monkeypatch):
 
     result = await get_current_price()
 
-    # current_price_eur_mwh present, derived from priceExVat
     assert "current_price_eur_mwh" in result
     assert isinstance(result["current_price_eur_mwh"], float)
-    assert result["current_price_eur_mwh"] == pytest.approx(_PRICE_EX_VAT_EUR_KWH * 1000.0)
+    assert result["current_price_eur_mwh"] == pytest.approx(_PRICE_EUR_KWH * 1000.0)
+    assert result.get("vat_included") is True
 
     assert isinstance(result["hourly_forecast"], list)
     assert len(result["hourly_forecast"]) == 7  # current hour + 6 future
 
     for entry in result["hourly_forecast"]:
-        assert isinstance(entry["date"], str), (
-            f"Expected ISO str, got {type(entry['date'])}"
+        assert isinstance(entry["readingDate"], str), (
+            f"Expected ISO str, got {type(entry['readingDate'])}"
         )
         assert isinstance(entry["price"], (int, float))
 
@@ -128,7 +121,7 @@ async def test_cache_expires_after_ttl(monkeypatch):
 
     await asyncio.sleep(0.1)
     await get_current_price()
-    assert counter["calls"] == 2  # cache expired
+    assert counter["calls"] == 2  # cache expires
 
 
 # ---------- 4. Race condition / lock ----------
@@ -167,27 +160,14 @@ async def test_no_future_prices_raises_502(monkeypatch):
 
 # ---------- 6. Unit conversion ----------
 @pytest.mark.asyncio
-async def test_price_conversion_uses_price_ex_vat_when_available(monkeypatch):
-    """If EnergyZero returns priceExVat, use it (wholesale market)."""
-    payload = _fake_energyzero_payload(missing_price_ex_vat=False)
-    monkeypatch.setattr(price, "_fetch_energyzero", _async_return(payload))
+async def test_price_conversion_multiplies_price_by_1000(monkeypatch):
+    """EnergyZero returns €/kWh; service returns €/MWh (multiplied by 1000)."""
+    monkeypatch.setattr(price, "_fetch_energyzero", _async_return(_fake_energyzero_payload()))
 
     result = await get_current_price()
 
     # 0.075 €/kWh * 1000 = 75 €/MWh
     assert result["current_price_eur_mwh"] == pytest.approx(75.0)
-
-
-@pytest.mark.asyncio
-async def test_price_conversion_falls_back_to_price_field(monkeypatch):
-    """If priceExVat is absent, fall back to the price field."""
-    payload = _fake_energyzero_payload(missing_price_ex_vat=True)
-    monkeypatch.setattr(price, "_fetch_energyzero", _async_return(payload))
-
-    result = await get_current_price()
-
-    # 0.08234 €/kWh * 1000 = 82.34 €/MWh (rounded)
-    assert result["current_price_eur_mwh"] == pytest.approx(82.34)
 
 
 # ---------- 7. Network / HTTP errors ----------
@@ -253,16 +233,10 @@ async def test_unexpected_payload_raises_502(monkeypatch):
 
 
 # ---------- 9. Unit helper ----------
-def test_pick_price_per_kwh_uses_price_ex_vat():
-    """_pick_price_per_kwh prefers priceExVat (wholesale market)."""
-    entry = {"price": 0.10, "priceExVat": 0.075}
+def test_pick_price_per_kwh_reads_price_field():
+    """_pick_price_per_kwh reads the only available price field from entries."""
+    entry = {"readingDate": "2026-06-23T22:00:00Z", "price": 0.075}
     assert _pick_price_per_kwh(entry) == pytest.approx(0.075)
-
-
-def test_pick_price_per_kwh_falls_back_to_price():
-    """_pick_price_per_kwh falls back to price if priceExVat is absent."""
-    entry = {"price": 0.08234}
-    assert _pick_price_per_kwh(entry) == pytest.approx(0.08234)
 
 
 # ---------- 10. Non-JSON response (ValueError path) ----------

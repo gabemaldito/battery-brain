@@ -8,10 +8,13 @@ Electricity price service — mirrors the gold pattern of weather.py:
 The chosen API is EnergyZero (https://api.energyzero.nl/v1/energyprices):
   - public, no key/token required
   - native Europe/Amsterdam timezone
-  - returns NL day-ahead prices in €/kWh (incl. and excl. VAT)
+  - returns NL day-ahead prices per hour in €/kWh
 
-Because the decision logic (`decide_action`) operates in €/MWh (50 and 150 €/MWh),
-we convert €/kWh -> €/MWh by multiplying by 1000.
+We control VAT through the `inclBtw` URL param (we use inclBtw=true: the price
+consumers actually pay). The decision logic works in €/MWh; we convert €/kWh
+-> €/MWh by multiplying by 1000.
+
+EnergyZero verified live against the public API on 2026-06-23.
 """
 
 import asyncio
@@ -39,17 +42,26 @@ _cache_lock: asyncio.Lock = asyncio.Lock()
 
 
 def _build_url() -> str:
-    """Builds the URL covering today + tomorrow in Europe/Amsterdam (formatted as UTC)."""
+    """
+    Builds the URL covering today + tomorrow in Europe/Amsterdam (formatted as UTC).
+
+    EnergyZero v1 schema (verified live, replaces the legacy intervalType/priceType/outputMode
+    trio that silently returns an empty Prices list):
+      interval=4      numeric code (3 = 15min, 4 = 1hour)
+      usageType=1     1 = Electricity, 3 = Gas
+      inclBtw=true    include VAT (price consumers actually pay)
+    """
     now_local = datetime.now(_AMSTERDAM_TZ)
     start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-    end = start + timedelta(days=2)
+    # Window: [today 00:00 NL, day-after-tomorrow 23:59:59 NL]
+    end_local = start + timedelta(days=2) - timedelta(microseconds=1)
     start_utc = start.astimezone(timezone.utc)
-    end_utc = end.astimezone(timezone.utc)
+    end_utc = end_local.astimezone(timezone.utc)
     return (
         f"{_BASE_URL}"
         f"?fromDate={start_utc.strftime('%Y-%m-%dT%H:%M:%S.000Z')}"
         f"&tillDate={end_utc.strftime('%Y-%m-%dT%H:%M:%S.000Z')}"
-        f"&intervalType=hour&priceType=ALL_IN&outputMode=JSON"
+        f"&interval=4&usageType=1&inclBtw=true"
     )
 
 
@@ -84,23 +96,21 @@ async def _fetch_energyzero() -> dict:
 
 def _pick_price_per_kwh(entry: dict) -> float:
     """
-    Returns the price per kWh. Prefers `priceExVat` to align with the wholesale
-    market (€/MWh reflects ex-VAT wholesale prices, not consumer VAT).
-    Falls back to `price` if the field is absent (reduced response).
+    Returns the €/kWh price from one EnergyZero entry.
+    The current v1 API exposes a single `price` field per entry (VAT policy is
+    controlled by the `inclBtw` URL parameter, not by field selection).
     """
-    if "priceExVat" in entry and entry["priceExVat"] is not None:
-        return float(entry["priceExVat"])
     return float(entry["price"])
 
 
 def _build_response(raw: dict) -> dict:
     """Extracts `current_price` + `hourly_forecast` from the EnergyZero response."""
     try:
-        prices_list = raw["prices"]
+        prices_list = raw["Prices"]
         if not isinstance(prices_list, list) or len(prices_list) == 0:
             raise ValueError("Empty prices list")
         df = pd.DataFrame(prices_list)
-        df["date"] = pd.to_datetime(df["date"])
+        df["readingDate"] = pd.to_datetime(df["readingDate"])
     except (ValueError, KeyError):
         logger.exception("Unexpected structure in EnergyZero response")
         raise HTTPException(
@@ -110,7 +120,7 @@ def _build_response(raw: dict) -> dict:
 
     # Filter from the current hour in Europe/Amsterdam (7 entries: current hour + 6 future)
     now_local = pd.Timestamp.now(tz=_AMSTERDAM_TZ.key).floor("h")
-    next_hours = df[df["date"] >= now_local].head(7).copy()
+    next_hours = df[df["readingDate"] >= now_local].head(7).copy()
 
     if next_hours.empty:
         logger.error("No future price returned by EnergyZero (stale window?)")
@@ -120,7 +130,7 @@ def _build_response(raw: dict) -> dict:
         )
 
     # Convert tz-aware Timestamp -> ISO string (JSON-safe)
-    next_hours["date"] = next_hours["date"].dt.strftime("%Y-%m-%dT%H:%M:%S%z")
+    next_hours["readingDate"] = next_hours["readingDate"].dt.strftime("%Y-%m-%dT%H:%M:%S%z")
 
     # current_price: first entry (= current hour) in €/MWh (price_eur_kwh * 1000)
     current_price_eur_mwh = _pick_price_per_kwh(next_hours.iloc[0].to_dict()) * 1000.0
@@ -128,6 +138,7 @@ def _build_response(raw: dict) -> dict:
     return {
         "current_price_eur_mwh": current_price_eur_mwh,
         "hourly_forecast": next_hours.to_dict(orient="records"),
+        "vat_included": True,
     }
 
 

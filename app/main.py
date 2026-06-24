@@ -102,10 +102,10 @@ app = FastAPI(
 # be sent if the frontend adds auth later.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_load_cors_origins(),
+    allow_origins=["https://gabemaldito.github.io"], 
     allow_credentials=True,
-    allow_methods=["GET", "OPTIONS"],   # GET-only API; OPTIONS needed for preflight
-    allow_headers=["Content-Type", "Authorization"],
+    allow_methods=["GET", "OPTIONS"], 
+    allow_headers=["*"], # Alterado para "*" para eliminar problemas com headers
 )
 
 

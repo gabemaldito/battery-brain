@@ -8,6 +8,8 @@ The API consumes real-time **solar radiation** (Open-Meteo) and **electricity pr
 
 ## 🌐 Live Demo
 
+https://gabemaldito.github.io/energy-dashboard/
+
 [https://battery-brain-production.up.railway.app/docs](https://battery-brain-production.up.railway.app/docs)
 
 ## How It Works
